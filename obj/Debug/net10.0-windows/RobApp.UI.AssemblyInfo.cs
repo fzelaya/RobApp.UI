@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("RobApp.UI")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e157cef45e075aa98bd7307320192751d71e6b42")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e2cfef919c82a172e854415b70fede30f388248e")]
 [assembly: System.Reflection.AssemblyProductAttribute("RobApp.UI")]
 [assembly: System.Reflection.AssemblyTitleAttribute("RobApp.UI")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
