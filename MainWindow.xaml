@@ -6,5 +6,28 @@
         xmlns:local="clr-namespace:RobApp.UI"
         mc:Ignorable="d"
         Title="MainWindow" Height="450" Width="800">
-    
+    <StackPanel Orientation="Vertical" Margin="10">
+        <Label FontSize="16" FontWeight="Bold" Margin="0,0,0,8">Robot App UI</Label>
+
+        <StackPanel Orientation="Vertical" Margin="0,0,0,8">
+            <Label>Word file path</Label>
+            <TextBox Text="{Binding SelectedWordPath}" IsReadOnly="True" Margin="0,2" />
+        </StackPanel>
+
+        <Button Command="{Binding SelectWordCommand}" Margin="0,5">Select Word File</Button>
+
+        <StackPanel Orientation="Vertical" Margin="0,5">
+            <Label>Excel file path</Label>
+            <TextBox Text="{Binding SelectedExcelPath}" IsReadOnly="True" Margin="0,2" HorizontalAlignment="Stretch" MinWidth="700" />
+        </StackPanel>
+
+        <Button Command="{Binding SelectExcelCommand}" Margin="0,5">Select Excel File</Button>
+
+        <Button Command="{Binding ProcessCommand}" Margin="0,10,0,0" Padding="10">Process Files</Button>
+
+        <StackPanel Orientation="Vertical" Margin="0,10,0,0">
+            <Label>Log</Label>
+            <TextBox Text="{Binding Log}" IsReadOnly="True" Margin="0,2" Height="150" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap" AcceptsReturn="True"/>
+        </StackPanel>
+    </StackPanel>
 </Window>
