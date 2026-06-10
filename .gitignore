@@ -1,0 +1,9 @@
+# Visual Studio / .NET
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.ide
+launchSettings.json
