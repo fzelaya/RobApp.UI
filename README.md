@@ -50,7 +50,7 @@ A WPF desktop application (.NET 10) that automates the extraction of trading rob
 The integration tests live in `RobApp.UI.Tests/` and run cross-platform (no Windows required).
 
 ```bash
-# From the repo root
+# From the repo root (renevall/)
 dotnet test RobApp.UI.Tests/RobApp.UI.Tests.csproj
 ```
 
