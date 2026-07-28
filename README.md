@@ -1,77 +1,205 @@
 # RobApp.UI
 
-A WPF desktop application (.NET 10) that automates the extraction of trading robot performance data from Word reports and consolidates it into an Excel spreadsheet.
+Extracts trading strategy performance metrics from Word (`.docx`) performance
+reports and appends them as rows to a single shared Excel workbook —
+`data/strategy-reports.xlsx`. Available both as a web upload page and a CLI,
+and both write to the same file.
 
 ## What it does
 
 1. **Select a Word report** (`.docx`) — a trading strategy performance report containing fields such as Name, Symbols, Total Net Profit, Total Trades, Winning Percentage, Gross Profit/Loss, Average Trade, Max Closed-Out Drawdown, Open Equity, and Avg Trades per Year.
-2. **Select an Excel workbook** (`.xlsx`) — the destination spreadsheet where results are stored.
-3. **Process** — the app parses the Word document using regex patterns to extract each performance field, then writes (or updates) a row in the Excel file keyed by the report's filename.
+2. **Save an Excel workbook** (`.xlsx`) — the destination spreadsheet where results are stored.
+3. **Process** — the app parses the Word document to extract each performance field, then writes a row in the Excel file keyed by the report's filename.
 
-## Key features
+## How extraction works
 
-- Regex-based extraction from `.docx` files using `DocumentFormat.OpenXml`
-- Excel read/write via `ClosedXML`; existing rows are updated in place, new reports are appended
-- MVVM architecture using `CommunityToolkit.Mvvm`
-- File validation (existence, extension, safe filename characters) before processing
-- Live log output in the UI showing extraction progress and any errors
+Report tables from these exporters often wrap several "fill-in" value cells
+in Word Structured Document Tags / content controls (`<w:sdt>`). That
+nesting makes the cell a *grandchild* of its table row instead of a direct
+child, which silently breaks naive "read each cell in the row" logic —
+including most off-the-shelf `.docx` libraries. Those cells just come back
+blank.
 
-## Tech stack
+To work around this, `src/docxExtractor.ts` parses `word/document.xml`
+directly (via `jszip` + `xmldom` + `xpath`) and searches for `w:tc`
+descendants regardless of `w:sdt` nesting, then pairs each `Label:` cell
+with the cell immediately following it. This is robust to the formatting
+quirks that break naive table readers.
 
-| Package | Purpose |
-|---|---|
-| `CommunityToolkit.Mvvm` | MVVM helpers (ObservableObject, RelayCommand) |
-| `ClosedXML` | Excel read/write |
-| `DocumentFormat.OpenXml` | Word document parsing |
-| `Xceed.Words.NET` | Word document support |
+`src/fields.ts` defines the canonical list of ~47 fields, their header text
+for the spreadsheet, and label aliases/normalization to tolerate minor
+wording variants across report exports. Two fields — **Winning Trades** and
+**Losing Trades** — are section headers in these reports, not data points;
+they're marked optional and won't be flagged as missing.
 
 ## Extracted fields
 
+Column A is always the source filename; every field below gets its own
+column, in this fixed order (51 columns total). Two fields — **Winning
+Trades** and **Losing Trades** — are section headers in the source report
+rather than data points, so they're always blank.
+
 | Column | Field |
-|---|---|
-| A | FileName |
-| B | ReportDate |
-| C | Name |
-| D | Symbols |
-| E | TotalNetProfit |
-| F | TotalTrades |
-| G | WinningPercentage |
-| H | TotalWinners |
-| I | TotalLosers |
-| J | GrossProfit |
-| K | GrossLoss |
-| L | AverageTrade |
-| M | MaxClosedOutDrawdown |
-| N | OpenEquity |
-| O | AvgTradesPerYear |
+|--------|-------|
+| A | Source File |
+| B | Total Net Profit |
+| C | Total Trades |
+| D | Average Trade |
+| E | Max Closed-out Drawdown |
+| F | Max Intra-trade Drawdown |
+| G | Account Size Required |
+| H | Open Equity |
+| I | Percent in the Market |
+| J | Avg # of Bars in Trade |
+| K | Avg # of Trades per Year |
+| L | Monthly Profit Analysis |
+| M | Average Monthly Profit |
+| N | Std Dev of Monthly Profits |
+| O | Winning Trades |
+| P | Total Winners |
+| Q | Gross Profit |
+| R | Average Win |
+| S | Largest Win |
+| T | Largest Drawdown in Win |
+| U | Avg Drawdown in Win |
+| V | Avg Run Up in Win |
+| W | Avg Run Down in Win |
+| X | Most Consec Wins |
+| Y | Avg # of Consec Wins |
+| Z | Avg # of Bars in Wins |
+| AA | Profit Factor ($Wins/$Losses) |
+| AB | Winning Percentage |
+| AC | Payout Ratio (AvgWin/AvgLoss) |
+| AD | CPC Index (PF x Win% x PR) |
+| AE | Expectancy (AvgTrade/AvgLoss) |
+| AF | Return Pct |
+| AG | Kelly Pct (AvgTrade/AvgWin) |
+| AH | Optimal f |
+| AI | Z-Score (W/L Predictability) |
+| AJ | Current Streak |
+| AK | Monthly Sharpe Ratio |
+| AL | Annualized Sharpe Ratio |
+| AM | Calmar Ratio |
+| AN | Losing Trades |
+| AO | Total Losers |
+| AP | Gross Loss |
+| AQ | Average Loss |
+| AR | Largest Loss |
+| AS | Largest Peak in Loss |
+| AT | Avg Peak in Loss |
+| AU | Avg Run Up in Loss |
+| AV | Avg Run Down in Loss |
+| AW | Most Consec Losses |
+| AX | Avg # of Consec Losses |
+| AY | Avg # of Bars in Losses |
 
-## Running the tests
+## The shared workbook
 
-The integration tests live in `RobApp.UI.Tests/` and run cross-platform (no Windows required).
+Every extraction — from the web page or the CLI — appends a row to
+**`data/strategy-reports.xlsx`**. Nothing generates a separate throwaway
+file per upload. Column A is always `Source File`; every field from
+`fields.ts` gets its own header column, in a fixed order.
+
+- The file (and `data/`) is created automatically on first run if missing.
+- Writes are **atomic**: each append writes to a temp file in `data/` and
+  renames it over the real file, so a crash mid-write can never corrupt it.
+- Concurrent appends (e.g. two people uploading at once) are **serialized**
+  through an in-memory queue in `src/workbookStore.ts`, so simultaneous
+  requests can't race each other and silently drop a row. This is
+  sufficient for a single Node process; scaling to multiple server
+  processes/machines would need a real file lock or a database instead.
+
+## Filename validation (web upload)
+
+Server-side (`src/filenameValidator.ts`, always enforced) and mirrored
+client-side for instant feedback:
+
+- Must end in `.docx` exactly (legacy `.doc` is rejected with a clear
+  message).
+- Base name may only contain letters, numbers, spaces, and `( ) _ - .`
+- No path separators, no `..`, no `< > : " | ? *`, no control characters.
+- No Windows-reserved device names (`CON`, `PRN`, `COM1`, etc.).
+- Max 150 characters.
+
+A bad name is **rejected**, never silently renamed — the person re-uploads
+with a corrected name. Content is validated separately (a `.txt` renamed to
+`.docx` is still rejected, with its own error).
+
+Note: Multer already reduces the incoming filename to its basename before
+the app sees it, so a value like `../../etc/report.docx` arrives as
+`report.docx` — directory-traversal attempts never reach the app logic.
+The validator's own `..` check still matters for a literal `..` with no
+slashes (e.g. `report..docx`), which Multer does not strip.
+
+## Project layout
+
+```
+src/
+  fields.ts             Canonical field list, header text, label aliases
+  docxExtractor.ts       Reads a .docx buffer/file, returns extracted values
+  valueParser.ts          "$969,421" / "29.7%" / "144.6" -> typed value
+  excelExporter.ts        Row-building + formatting helpers, one-shot export
+  workbookStore.ts        Opens/creates/appends to the shared data/ workbook
+  filenameValidator.ts    Upload filename validation rules
+  server.ts               Express web server (upload page + API)
+  index.ts                CLI entry point
+public/
+  index.html              Upload page (drag-and-drop, client-side validation)
+data/
+  strategy-reports.xlsx   The shared workbook (generated, gitignored)
+```
+
+## Setup
 
 ```bash
-# From the repo root (renevall/)
-dotnet test RobApp.UI.Tests/RobApp.UI.Tests.csproj
+npm install
+npm run build
 ```
 
-Expected output:
+## Usage — Web
+
+```bash
+npm run serve          # or: npm run dev:serve  (runs via ts-node, no build step)
 ```
-Test summary: total: 5, failed: 0, succeeded: 5, skipped: 0, duration: ~1s
+
+Open `http://localhost:3000`, drag in a `.docx` report. On success it
+downloads the updated `strategy-reports.xlsx` and shows which row was just
+added. A "Download workbook" link at the top fetches the current file
+anytime without uploading anything (`GET /api/download`).
+
+`PORT` env var overrides the default port (3000).
+
+## Usage — CLI
+
+```bash
+# Append one or more reports to the shared workbook (data/strategy-reports.xlsx)
+node dist/index.js report1.docx report2.docx
+
+# Point it at a whole directory of .docx files
+node dist/index.js ./reports/
+
+# Write a standalone file instead of touching the shared workbook
+node dist/index.js report1.docx --out one-off-export.xlsx
+
+# Exit non-zero if any file is missing a required field
+node dist/index.js report1.docx --strict
 ```
 
-### What the tests cover
+## Error handling
 
-| Test | Description |
-|---|---|
-| `ExtractFields_FromRealDocx_ReturnsAllExpectedValues` | Creates a real `.docx`, runs `WordService`, asserts all 14 fields are extracted correctly |
-| `ExtractFields_MissingFile_ReturnsEmptyValues` | Service returns empty strings gracefully when the file doesn't exist |
-| `WriteFieldsToExcel_NewRow_AppendsDataAtFirstAvailableRow` | Creates a real `.xlsx`, writes a row, verifies all 15 columns |
-| `WriteFieldsToExcel_ExistingFileName_UpdatesRowInPlace` | Writing the same filename twice updates the row, no duplicate appended |
-| `FullPipeline_WordToExcel_ProducesCorrectSpreadsheet` | End-to-end: `.docx` → `WordService` → `ExcelService` → asserts values in the spreadsheet |
-
-> All tests create and delete temporary files automatically; no test fixtures need to be set up manually.
+- Invalid zip / non-`.docx` file, missing `word/document.xml`, or malformed
+  XML → clear error, doesn't crash a batch (CLI continues with remaining
+  files; web returns 400 with a reason).
+- Missing individual fields → row is still written, with those cells set to
+  `MISSING` and shown in red for easy review; `--strict` (CLI) turns this
+  into a non-zero exit code instead.
+- File size cap on upload: 20 MB.
 
 ## Requirements
 
-- Windows (WPF app)
-- .NET 10 SDK
+- Node.js (tested on v22) — download: https://nodejs.org/en/download
+- npm — bundled with Node.js above; see https://www.npmjs.com/ for details
+
+Happy Coding!
+
+:v:
