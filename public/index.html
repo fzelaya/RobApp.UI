@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Strategy Report Extractor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0E1512;
+    --surface: #141D19;
+    --surface-raised: #1B2620;
+    --rule: #2A3830;
+    --ledger: #4C9A7D;
+    --ledger-bright: #6FC79F;
+    --text: #E7ECE9;
+    --text-muted: #8CA096;
+    --danger: #E0684F;
+    --danger-bg: #2A1815;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 27px,
+        var(--rule) 27px,
+        var(--rule) 28px
+      ),
+      var(--ink);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .sheet {
+    width: 100%;
+    max-width: 620px;
+  }
+
+  .letterhead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 14px;
+    margin-bottom: 28px;
+  }
+
+  .letterhead .mark {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    color: var(--ledger-bright);
+    text-transform: uppercase;
+  }
+
+  .letterhead .doc-no {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .letterhead .doc-no:hover {
+    color: var(--ledger-bright);
+    border-bottom-color: var(--ledger-bright);
+  }
+
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+
+  .subhead {
+    color: var(--text-muted);
+    font-size: 14.5px;
+    line-height: 1.55;
+    margin: 0 0 28px;
+    max-width: 46ch;
+  }
+
+  .dropzone {
+    position: relative;
+    border: 1px dashed var(--rule);
+    border-radius: 4px;
+    background: var(--surface);
+    padding: 40px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .dropzone.dragover {
+    border-color: var(--ledger-bright);
+    background: var(--surface-raised);
+  }
+
+  .dropzone.has-file {
+    border-style: solid;
+    border-color: var(--ledger);
+  }
+
+  .dropzone input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .glyph {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 28px;
+    color: var(--ledger);
+    margin-bottom: 10px;
+    display: block;
+  }
+
+  .drop-label {
+    font-size: 15px;
+    font-weight: 500;
+  }
+
+  .drop-hint {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
+
+  .filename-tag {
+    display: none;
+    margin-top: 14px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    background: var(--surface-raised);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 8px 12px;
+    color: var(--ledger-bright);
+    word-break: break-all;
+    text-align: left;
+  }
+
+  .filename-tag.visible { display: block; }
+
+  .status-line {
+    min-height: 22px;
+    margin-top: 16px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .status-line.error {
+    color: var(--danger);
+    background: var(--danger-bg);
+    padding: 10px 12px;
+    border-radius: 3px;
+    border: 1px solid #4a2620;
+  }
+
+  .status-line.ok {
+    color: var(--ledger-bright);
+  }
+
+  .status-line.busy {
+    color: var(--text-muted);
+  }
+
+  button.submit {
+    margin-top: 20px;
+    width: 100%;
+    padding: 13px;
+    background: var(--ledger);
+    color: #0E1512;
+    border: none;
+    border-radius: 4px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14.5px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition: background 0.15s ease, opacity 0.15s ease;
+  }
+
+  button.submit:hover:not(:disabled) { background: var(--ledger-bright); }
+
+  button.submit:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .rules {
+    margin-top: 28px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    line-height: 1.7;
+  }
+
+  .rules strong { color: var(--text); font-weight: 500; }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="letterhead">
+      <span class="mark">Strategy Report Extractor</span>
+      <a class="doc-no" id="downloadLink" href="/api/download">Download workbook →</a>
+    </div>
+
+    <h1>Upload a strategy performance report</h1>
+    <p class="subhead">
+      Drop in a .docx export and its metrics are appended as a new row to the shared
+      tracking workbook — every report your team uploads lands in the same file.
+    </p>
+
+    <form id="uploadForm">
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept=".docx" />
+        <span class="glyph">⌘</span>
+        <div class="drop-label">Drop .docx file here, or click to browse</div>
+        <div class="drop-hint">ONE FILE · .DOCX ONLY · MAX 20MB</div>
+        <div class="filename-tag" id="filenameTag"></div>
+      </div>
+
+      <div class="status-line" id="statusLine"></div>
+
+      <button type="submit" class="submit" id="submitBtn" disabled>Extract to Excel</button>
+    </form>
+
+    <div class="rules">
+      <strong>Filename rules —</strong> letters, numbers, spaces, and ( ) _ - . only.
+      Must end in <strong>.docx</strong>. No slashes, no path characters, no reserved
+      system names.
+    </div>
+  </div>
+
+<script>
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const filenameTag = document.getElementById('filenameTag');
+  const statusLine = document.getElementById('statusLine');
+  const submitBtn = document.getElementById('submitBtn');
+  const form = document.getElementById('uploadForm');
+
+  let selectedFile = null;
+
+  // Mirrors the server-side rules in src/filenameValidator.ts for instant
+  // feedback. The server re-validates independently -- this is only UX.
+  const MAX_NAME_LENGTH = 150;
+  const RESERVED_NAMES = new Set([
+    'CON','PRN','AUX','NUL',
+    'COM1','COM2','COM3','COM4','COM5','COM6','COM7','COM8','COM9',
+    'LPT1','LPT2','LPT3','LPT4','LPT5','LPT6','LPT7','LPT8','LPT9'
+  ]);
+  const ALLOWED_BASENAME_CHARS = /^[\p{L}\p{N} ()_.-]+$/u;
+
+  function validateFilenameClientSide(rawName) {
+    const name = rawName.normalize('NFC');
+    if (name.trim().length === 0) return 'Filename is empty.';
+    if (name.length > MAX_NAME_LENGTH) return `Filename is too long (max ${MAX_NAME_LENGTH} characters).`;
+    if (/[\/\\]/.test(name)) return 'Filename cannot contain "/" or "\\\\".';
+    if (name.includes('..')) return 'Filename cannot contain "..".';
+    if (/[<>:"|?*]/.test(name)) return 'Filename cannot contain any of: < > : " | ? *';
+
+    const extMatch = name.match(/^(.*)(\.[^.]+)$/);
+    if (!extMatch) return 'Filename must end in ".docx" (no extension found).';
+    const [, baseName, ext] = extMatch;
+
+    if (ext.toLowerCase() !== '.docx') {
+      return `Unsupported file type "${ext}". Only .docx files are accepted.`;
+    }
+    if (baseName.trim().length === 0) return 'Filename cannot be just ".docx" -- give it a name.';
+    if (baseName.startsWith('.') || baseName.startsWith(' ') || baseName.endsWith(' ')) {
+      return 'Filename cannot start with a dot/space or end with a space.';
+    }
+    if (!ALLOWED_BASENAME_CHARS.test(baseName)) {
+      return 'Filename can only contain letters, numbers, spaces, and ( ) _ - .';
+    }
+    const bareName = baseName.split('.')[0].toUpperCase();
+    if (RESERVED_NAMES.has(bareName)) {
+      return `"${bareName}" is a reserved system name and can't be used as a filename.`;
+    }
+    return null;
+  }
+
+  function setStatus(message, kind) {
+    statusLine.textContent = message || '';
+    statusLine.className = 'status-line' + (kind ? ' ' + kind : '');
+  }
+
+  function handleFile(file) {
+    if (!file) return;
+    const error = validateFilenameClientSide(file.name);
+
+    filenameTag.textContent = file.name;
+    filenameTag.classList.add('visible');
+
+    if (error) {
+      selectedFile = null;
+      dropzone.classList.remove('has-file');
+      submitBtn.disabled = true;
+      setStatus(error, 'error');
+      return;
+    }
+
+    selectedFile = file;
+    dropzone.classList.add('has-file');
+    submitBtn.disabled = false;
+    setStatus('Ready to extract.', 'ok');
+  }
+
+  fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+
+  ['dragenter', 'dragover'].forEach(evt =>
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    })
+  );
+  ['dragleave', 'drop'].forEach(evt =>
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+    })
+  );
+  dropzone.addEventListener('drop', (e) => {
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      fileInput.files = e.dataTransfer.files;
+      handleFile(file);
+    }
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!selectedFile) return;
+
+    submitBtn.disabled = true;
+    setStatus('Extracting…', 'busy');
+
+    const body = new FormData();
+    body.append('report', selectedFile, selectedFile.name);
+
+    try {
+      const res = await fetch('/api/extract', { method: 'POST', body });
+
+      if (!res.ok) {
+        let message = 'Extraction failed.';
+        try {
+          const data = await res.json();
+          message = data.error || message;
+        } catch (_) {}
+        setStatus(message, 'error');
+        submitBtn.disabled = false;
+        return;
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const downloadName = match ? match[1] : 'strategy-reports.xlsx';
+      const rowNumber = res.headers.get('X-Row-Number');
+      const totalRows = res.headers.get('X-Total-Rows');
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = downloadName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      const countNote = totalRows ? ` — row ${rowNumber} of ${totalRows} total` : '';
+      setStatus(`Done — added to ${downloadName}${countNote}`, 'ok');
+      submitBtn.disabled = false;
+    } catch (err) {
+      setStatus('Network error while extracting. Please try again.', 'error');
+      submitBtn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

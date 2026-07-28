@@ -1,15 +1,18 @@
-# RobApp.UI
+# Strategy Report Extractor
 
 Extracts trading strategy performance metrics from Word (`.docx`) performance
 reports and appends them as rows to a single shared Excel workbook —
 `data/strategy-reports.xlsx`. Available both as a web upload page and a CLI,
 and both write to the same file.
 
-## What it does
+## Why this exists
 
-1. **Select a Word report** (`.docx`) — a trading strategy performance report containing fields such as Name, Symbols, Total Net Profit, Total Trades, Winning Percentage, Gross Profit/Loss, Average Trade, Max Closed-Out Drawdown, Open Equity, and Avg Trades per Year.
-2. **Save an Excel workbook** (`.xlsx`) — the destination spreadsheet where results are stored.
-3. **Process** — the app parses the Word document to extract each performance field, then writes a row in the Excel file keyed by the report's filename.
+Strategy performance reports (e.g. TradeStation/MultiCharts "Strategy
+Performance Report" exports) contain ~47 metrics — net profit, drawdowns,
+win/loss stats, Sharpe ratio, etc. — buried in a Word table. This tool reads
+that table reliably and turns every report you upload into one row in a
+running spreadsheet, so you can track strategies over time without manual
+copy-paste.
 
 ## How extraction works
 
@@ -31,6 +34,44 @@ for the spreadsheet, and label aliases/normalization to tolerate minor
 wording variants across report exports. Two fields — **Winning Trades** and
 **Losing Trades** — are section headers in these reports, not data points;
 they're marked optional and won't be flagged as missing.
+
+## The shared workbook
+
+Every extraction — from the web page or the CLI — appends a row to
+**`data/strategy-reports.xlsx`**. Nothing generates a separate throwaway
+file per upload. Column A is always `Source File`; every field from
+`fields.ts` gets its own header column, in a fixed order.
+
+- The file (and `data/`) is created automatically on first run if missing.
+- Writes are **atomic**: each append writes to a temp file in `data/` and
+  renames it over the real file, so a crash mid-write can never corrupt it.
+- Concurrent appends (e.g. two people uploading at once) are **serialized**
+  through an in-memory queue in `src/workbookStore.ts`, so simultaneous
+  requests can't race each other and silently drop a row. This is
+  sufficient for a single Node process; scaling to multiple server
+  processes/machines would need a real file lock or a database instead.
+
+## Filename validation (web upload)
+
+Server-side (`src/filenameValidator.ts`, always enforced) and mirrored
+client-side for instant feedback:
+
+- Must end in `.docx` exactly (legacy `.doc` is rejected with a clear
+  message).
+- Base name may only contain letters, numbers, spaces, and `( ) _ - .`
+- No path separators, no `..`, no `< > : " | ? *`, no control characters.
+- No Windows-reserved device names (`CON`, `PRN`, `COM1`, etc.).
+- Max 150 characters.
+
+A bad name is **rejected**, never silently renamed — the person re-uploads
+with a corrected name. Content is validated separately (a `.txt` renamed to
+`.docx` is still rejected, with its own error).
+
+Note: Multer already reduces the incoming filename to its basename before
+the app sees it, so a value like `../../etc/report.docx` arrives as
+`report.docx` — directory-traversal attempts never reach the app logic.
+The validator's own `..` check still matters for a literal `..` with no
+slashes (e.g. `report..docx`), which Multer does not strip.
 
 ## Extracted fields
 
@@ -92,44 +133,6 @@ rather than data points, so they're always blank.
 | AW | Most Consec Losses |
 | AX | Avg # of Consec Losses |
 | AY | Avg # of Bars in Losses |
-
-## The shared workbook
-
-Every extraction — from the web page or the CLI — appends a row to
-**`data/strategy-reports.xlsx`**. Nothing generates a separate throwaway
-file per upload. Column A is always `Source File`; every field from
-`fields.ts` gets its own header column, in a fixed order.
-
-- The file (and `data/`) is created automatically on first run if missing.
-- Writes are **atomic**: each append writes to a temp file in `data/` and
-  renames it over the real file, so a crash mid-write can never corrupt it.
-- Concurrent appends (e.g. two people uploading at once) are **serialized**
-  through an in-memory queue in `src/workbookStore.ts`, so simultaneous
-  requests can't race each other and silently drop a row. This is
-  sufficient for a single Node process; scaling to multiple server
-  processes/machines would need a real file lock or a database instead.
-
-## Filename validation (web upload)
-
-Server-side (`src/filenameValidator.ts`, always enforced) and mirrored
-client-side for instant feedback:
-
-- Must end in `.docx` exactly (legacy `.doc` is rejected with a clear
-  message).
-- Base name may only contain letters, numbers, spaces, and `( ) _ - .`
-- No path separators, no `..`, no `< > : " | ? *`, no control characters.
-- No Windows-reserved device names (`CON`, `PRN`, `COM1`, etc.).
-- Max 150 characters.
-
-A bad name is **rejected**, never silently renamed — the person re-uploads
-with a corrected name. Content is validated separately (a `.txt` renamed to
-`.docx` is still rejected, with its own error).
-
-Note: Multer already reduces the incoming filename to its basename before
-the app sees it, so a value like `../../etc/report.docx` arrives as
-`report.docx` — directory-traversal attempts never reach the app logic.
-The validator's own `..` check still matters for a literal `..` with no
-slashes (e.g. `report..docx`), which Multer does not strip.
 
 ## Project layout
 
@@ -197,9 +200,5 @@ node dist/index.js report1.docx --strict
 
 ## Requirements
 
-- Node.js (tested on v22) — download: https://nodejs.org/en/download
-- npm — bundled with Node.js above; see https://www.npmjs.com/ for details
-
-Happy Coding!
-
-:v:
+- Node.js (tested on v22)
+- npm

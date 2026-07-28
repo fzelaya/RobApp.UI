@@ -2,258 +2,240 @@
 
 ## Overview
 
-The user selects a `.docx` trading robot performance report and a target `.xlsx` spreadsheet.
-The app reads every line of the Word document, searches for known labels using pattern matching,
-extracts the value next to each label, and writes one row into the spreadsheet.
+The user uploads a `.docx` trading strategy performance report — either
+through the web upload page or the CLI. The app opens the file, locates
+every table in the document, builds a map of every `Label: Value` pair it
+finds (regardless of how Word has internally formatted that cell), matches
+50 known metric labels against that map, and appends one row to a single
+shared spreadsheet, `data/strategy-reports.xlsx`.
+
+This replaces an earlier draft of this use case, which assumed the app
+would scan the document as flat paragraph text and match each field with
+its own hand-written regex. That approach doesn't hold up against the
+report format actually being used (see Step 1) — the implemented app
+instead parses the document's table structure directly and uses one
+generic label-matching mechanism for all fields, driven by a field list
+rather than per-field code. The differences that matter for product
+sign-off are called out inline below and summarized in the checklist at
+the end.
 
 ---
 
 ## Step-by-step extraction algorithm
 
-### Step 1 — Open the Word document
+### Step 1 — Validate the filename (web upload only)
 
-The app opens the `.docx` file and reads all its text, paragraph by paragraph and table cell by cell, into one continuous block of plain text. Line breaks are preserved. Special whitespace characters (non-breaking spaces, tabs) are normalized to regular spaces before any searching begins.
+Before anything in the file is read, the uploaded filename itself is
+checked:
 
-**What can go wrong:** If the file is corrupted or password-protected, the app logs an error and returns all fields as empty. No row is written to Excel.
+- Must end in `.docx` exactly (legacy `.doc` is rejected with a clear
+  message telling the user to re-save as `.docx`).
+- May only contain letters, numbers, spaces, and `( ) _ - .`
+- No path separators, no `..`, no `< > : " | ? *`, no control characters,
+  no Windows-reserved device names (`CON`, `PRN`, `COM1`, etc.), and no
+  more than 150 characters.
 
----
-
-### Step 2 — Extract: Report Date
-
-**What it looks for:** A date/time stamp anywhere in the document that matches the format `M/D/YYYY H:MM AM/PM`.
-
-**Examples that match:**
-- `6/17/2026 10:00 AM`
-- `12/1/2025 9:45`
-
-**Examples that do NOT match:**
-- `2026-06-17` (wrong format — dashes instead of slashes)
-- `June 17, 2026` (written-out month)
-
-**What is captured:** The full date and time string.
+A bad filename is **rejected outright** with a specific reason — it is
+never silently renamed or truncated. The person re-uploads with a
+corrected name. (The CLI skips this step, since it's handed a filesystem
+path directly rather than an untrusted upload.)
 
 ---
 
-### Step 3 — Extract: Name
+### Step 2 — Open the Word document
 
-**What it looks for:** A line containing the word `Name` followed by a colon `:` or dash `-`, then captures everything after it on the same line.
+The `.docx` file is a zip archive. The app:
 
-**Examples that match:**
-- `Name: MyRobotStrategy`
-- `Name - AlgoBot_v2`
-- `name: test robot` (case-insensitive)
+1. Confirms the file starts with the zip signature (`PK`) before doing
+   anything else — this alone catches most "wrong file type" mistakes
+   immediately, with a message distinguishing "not a zip file" from
+   "a zip file, but not a Word document" (missing `word/document.xml`).
+2. Unzips it and parses `word/document.xml` as XML.
 
-**Examples that do NOT match:**
-- `Strategy Name` (label comes after, not before, the value)
-- `NameMyRobotStrategy` (no separator)
+**What's different from a plain-text reader, and why it matters:** the
+performance reports this app targets (TradeStation/MultiCharts-style
+"Strategy Performance Report" exports) place several of their value cells
+inside Word content controls (`<w:sdt>` — Structured Document Tags). That
+wrapping nests the value cell one level deeper than a normal table cell,
+which silently breaks any approach that reads "the text of each cell in
+this row" using only direct children — including a plain paragraph-by-
+paragraph text dump. Those cells just come back blank, with no error to
+signal that anything was missed.
 
-**What is captured:** The text after the separator, e.g. `MyRobotStrategy`.
+To avoid that, the app searches for `w:tc` (table cell) elements as
+**descendants** of each table row rather than direct children, which finds
+the cell correctly whether or not it's wrapped in a content control.
 
----
-
-### Step 4 — Extract: Symbols
-
-**What it looks for:** A line containing the word `Symbols` followed by `:` or `-`, then captures everything after it on the same line.
-
-**Examples that match:**
-- `Symbols: EURUSD`
-- `Symbols: EURUSD, GBPUSD`
-
-**Examples that do NOT match:**
-- `Symbol: EURUSD` (singular — missing the `s`)
-
-**What is captured:** The text after the separator, e.g. `EURUSD`.
-
----
-
-### Step 5 — Extract: Total Net Profit
-
-**What it looks for:** The phrase `Total Net Profit` (allows extra spaces between words) followed by `:` or `-`, then an optional `$` sign, then a numeric value. Only digits, commas, dots, and a leading minus sign are captured.
-
-**Examples that match:**
-- `Total Net Profit: 12,345.67`
-- `Total Net Profit : -500.00`
-- `Total  Net  Profit: $9,999`
-
-**Examples that do NOT match:**
-- `Net Profit: 500` (missing the word `Total`)
-- `Total Net Profit: N/A` (non-numeric value)
-
-**What is captured:** The numeric part only, e.g. `12,345.67`.
+**What can go wrong:** a corrupted file, a non-zip file, a zip file that
+isn't actually a Word document, or malformed XML inside it all produce a
+specific error message and stop processing — no row is written for that
+file. Other files in the same batch (CLI) or other uploads (web) are
+unaffected.
 
 ---
 
-### Step 6 — Extract: Total Trades
+### Step 3 — Build the label → value map
 
-**What it looks for:** The phrase `Total Trades` followed by `:` or `-`, then a whole number (integers only, no decimals).
+Rather than a separate regex per field, the app walks every table in the
+document once and builds a single map: for each row, it reads every cell's
+text in document order, and whenever a cell's trimmed text ends in a colon
+(`:`), it records that label with the text of the **immediately following
+cell** as its value. This mirrors how the source reports are actually laid
+out — labels and values are always adjacent cells, including rows that
+pack two label/value pairs side by side (a label/value pair, a blank
+spacer cell, then a second label/value pair).
 
-**Examples that match:**
-- `Total Trades: 200`
-- `Total Trades - 45`
-
-**Examples that do NOT match:**
-- `Total Trades: 200.5` (decimal not captured — stops at `200`)
-- `Trades: 200` (missing the word `Total`)
-
-**What is captured:** The integer, e.g. `200`.
-
----
-
-### Step 7 — Extract: Winning Percentage
-
-**What it looks for:** The phrase `Winning Percentage` followed by `:` or `-`, then a numeric value that may include a `%` sign.
-
-**Examples that match:**
-- `Winning Percentage: 65.5%`
-- `Winning Percentage - 70`
-
-**Examples that do NOT match:**
-- `Win Percentage: 65%` (abbreviated label)
-
-**What is captured:** The value including `%` if present, e.g. `65.5%`.
+This is a **table-cell-based** extraction, not a free-text scan. A label
+and its value need to be in adjacent cells of the same row; a label found
+in a plain paragraph (outside any table) is not matched. All 50 fields the
+app looks for happen to live in one table in the source reports.
 
 ---
 
-### Step 8 — Extract: Total Winners
+### Step 4 — Match each known field
 
-**What it looks for:** The phrase `Total Winners` followed by `:` or `-`, then a whole number.
+The app has a fixed list of 50 canonical fields (see the full table
+below). Each one is matched against the label map using:
 
-**Examples that match:**
-- `Total Winners: 130`
-- `Total Winners - 88`
+- Case-insensitive comparison.
+- A trailing colon stripped from the label before comparing.
+- Non-breaking spaces normalized to regular spaces, and repeated
+  whitespace collapsed.
+- A short list of known wording variants per field where the source
+  reports are inconsistent — e.g. both `Max Closed-out Drawdown` and
+  `Max Closed-Out Drawdown` are accepted as the same field.
 
-**What is captured:** The integer, e.g. `130`.
+Two entries — **Monthly Profit Analysis**, **Winning Trades**, and
+**Losing Trades** — are section headers in the source report, not data
+points with a value next to them. They're marked optional and are always
+left blank; this does not count as a missing field.
 
----
-
-### Step 9 — Extract: Total Losers
-
-**What it looks for:** The phrase `Total Losers` followed by `:` or `-`, then a whole number.
-
-**Examples that match:**
-- `Total Losers: 70`
-
-**What is captured:** The integer, e.g. `70`.
-
----
-
-### Step 10 — Extract: Gross Profit
-
-**What it looks for:** The phrase `Gross Profit` followed by `:` or `-`, then a numeric value (may be negative).
-
-**Examples that match:**
-- `Gross Profit: 20,000.00`
-- `Gross Profit - -500`
-
-**What is captured:** The numeric value, e.g. `20,000.00`.
-
-> **Important:** The pattern for Gross Profit will also match a line that contains `Gross Profit` even if it appears inside a longer label like `Total Gross Profit`. If the document contains such a line, the first match wins.
+**Not currently extracted:** an earlier draft of this use case (and an
+earlier mockup) listed `ReportDate`, `Name`, and `Symbols` as fields.
+These are **not** in the implemented field list — the app does not
+currently extract them. If the product needs them, they'd be added the
+same way as any other field (label + aliases in `src/fields.ts`); flagging
+this here so it's a deliberate decision rather than a silent gap.
 
 ---
 
-### Step 11 — Extract: Gross Loss
+### Step 5 — The 50 extracted fields
 
-**What it looks for:** The phrase `Gross Loss` followed by `:` or `-`, then a numeric value (typically negative).
+| Total Net Profit | Total Trades | Average Trade | Max Closed-out Drawdown | Max Intra-trade Drawdown |
+|---|---|---|---|---|
+| Account Size Required | Open Equity | Percent in the Market | Avg # of Bars in Trade | Avg # of Trades per Year |
+| Monthly Profit Analysis * | Average Monthly Profit | Std Dev of Monthly Profits | Winning Trades * | Total Winners |
+| Gross Profit | Average Win | Largest Win | Largest Drawdown in Win | Avg Drawdown in Win |
+| Avg Run Up in Win | Avg Run Down in Win | Most Consec Wins | Avg # of Consec Wins | Avg # of Bars in Wins |
+| Profit Factor ($Wins/$Losses) | Winning Percentage | Payout Ratio (AvgWin/AvgLoss) | CPC Index (PF x Win% x PR) | Expectancy (AvgTrade/AvgLoss) |
+| Return Pct | Kelly Pct (AvgTrade/AvgWin) | Optimal f | Z-Score (W/L Predictability) | Current Streak |
+| Monthly Sharpe Ratio | Annualized Sharpe Ratio | Calmar Ratio | Losing Trades * | Total Losers |
+| Gross Loss | Average Loss | Largest Loss | Largest Peak in Loss | Avg Peak in Loss |
+| Avg Run Up in Loss | Avg Run Down in Loss | Most Consec Losses | Avg # of Consec Losses | Avg # of Bars in Losses |
 
-**Examples that match:**
-- `Gross Loss: -7,654.33`
+\* Section header in the source report — always blank, not treated as missing.
 
-**What is captured:** The numeric value, e.g. `-7,654.33`.
-
----
-
-### Step 12 — Extract: Average Trade
-
-**What it looks for:** The phrase `Average Trade` followed by `:` or `-`, then a numeric value (may be negative).
-
-**Examples that match:**
-- `Average Trade: 123.45`
-- `Average Trade - -10.00`
-
-**What is captured:** The numeric value, e.g. `123.45`.
+The exact spreadsheet column each of these maps to is in Step 7.
 
 ---
 
-### Step 13 — Extract: Max Closed-Out Drawdown
+### Step 6 — Convert each value to a typed cell
 
-**What it looks for:** The phrase `Max Closed-out Drawdown` or `Max Closed out Drawdown` (hyphen or space between `Closed` and `out`) followed by `:` or `-`, then a numeric value.
+Raw extracted text is a string (e.g. `$969,421`, `-29.7%`, `144.6`,
+`N/A for baskets`, `7 Losses`). Before writing to Excel, each value is
+classified and converted so the spreadsheet has real numbers to sort,
+filter, and chart on rather than text everywhere:
 
-**Examples that match:**
-- `Max Closed-out Drawdown: -2,000.00`
-- `Max Closed out Drawdown : -500`
+| Raw text looks like | Written as | Cell format |
+|---|---|---|
+| `$969,421` / `-$113,732` | Number | Currency, negatives in red |
+| `29.7%` / `-6.7%` | Number (fraction) | Percent, one decimal |
+| `144.6` / `2,453` | Number | `#,##0.00` |
+| Anything else (`N/A for baskets`, `7 Losses`) | Text, unchanged | — |
 
-**Examples that do NOT match:**
-- `Max Drawdown: -2000` (shortened label)
-- `Maximum Closed-out Drawdown: -2000` (different prefix)
-
-**What is captured:** The numeric value, e.g. `-2,000.00`.
-
----
-
-### Step 14 — Extract: Open Equity
-
-**What it looks for:** The phrase `Open Equity` followed by `:` or `-`, then a numeric value.
-
-**Examples that match:**
-- `Open Equity: 50,000.00`
-
-**What is captured:** The numeric value, e.g. `50,000.00`.
+A field with no value at all (not found, and not one of the optional
+section headers) is written as the literal text `MISSING`, and that cell's
+font is colored red so it's visible at a glance on review — the row is
+still written; extraction of one field never blocks the rest.
 
 ---
 
-### Step 15 — Extract: Avg Trades per Year
+### Step 7 — Write to the shared Excel workbook
 
-**What it looks for:** The phrase `Avg # of Trades per Year` (allows extra spaces around `#`) followed by `:` or `-`, then a numeric value.
+Unlike the earlier draft of this use case, the app does **not** target a
+spreadsheet the user picks per run. There is **one fixed file**,
+`data/strategy-reports.xlsx`, that every extraction — from any upload,
+from any run of the CLI — writes into. It's created automatically (with
+just a header row) the first time the app runs if it doesn't already
+exist.
 
-**Examples that match:**
-- `Avg # of Trades per Year: 25.0`
-- `Avg # of Trades per Year - 12`
+**Write behavior — important difference from the earlier draft:** the
+current implementation always **appends** a new row. It does **not** scan
+column A for an existing filename and overwrite that row the way the
+previous draft specified. Re-uploading the same report twice produces two
+rows, not one updated row. This is a deliberate simplification for now,
+called out explicitly in the checklist below for product sign-off, since
+the previous draft's behavior was different on this exact point.
 
-**Examples that do NOT match:**
-- `Average # of Trades per Year: 25` (uses `Average` instead of `Avg`)
-- `Avg Trades per Year: 25` (missing `# of`)
+Writes are atomic (written to a temp file, then renamed over the real
+file, so a crash mid-write can't corrupt it) and serialized so that two
+uploads happening at the same time can't race each other and drop a row.
 
-**What is captured:** The numeric value, e.g. `25.0`.
+**Column layout** — column A is always the source filename; the 50 fields
+follow in a fixed order:
 
----
-
-## Step 16 — Write to Excel
-
-Once all fields are extracted, the app opens the target `.xlsx` file and:
-
-1. Scans column A (FileName) starting from row 2 to check if a row for this report already exists.
-2. **If found** — overwrites that row with the new values (update in place).
-3. **If not found** — appends a new row at the bottom.
-
-The row is written in this column order:
-
-| Column | Field              |
-|--------|--------------------|
-| A      | FileName           |
-| B      | ReportDate         |
-| C      | Name               |
-| D      | Symbols            |
-| E      | TotalNetProfit     |
-| F      | TotalTrades        |
-| G      | WinningPercentage  |
-| H      | TotalWinners       |
-| I      | TotalLosers        |
-| J      | GrossProfit        |
-| K      | GrossLoss          |
-| L      | AverageTrade       |
-| M      | MaxClosedOutDrawdown |
-| N      | OpenEquity         |
-| O      | AvgTradesPerYear   |
-
-If a field was not found in the Word document, its cell is left **empty** (no error is thrown).
+| Column | Field | | Column | Field |
+|---|---|---|---|---|
+| A | Source File | | AA | Profit Factor ($Wins/$Losses) |
+| B | Total Net Profit | | AB | Winning Percentage |
+| C | Total Trades | | AC | Payout Ratio (AvgWin/AvgLoss) |
+| D | Average Trade | | AD | CPC Index (PF x Win% x PR) |
+| E | Max Closed-out Drawdown | | AE | Expectancy (AvgTrade/AvgLoss) |
+| F | Max Intra-trade Drawdown | | AF | Return Pct |
+| G | Account Size Required | | AG | Kelly Pct (AvgTrade/AvgWin) |
+| H | Open Equity | | AH | Optimal f |
+| I | Percent in the Market | | AI | Z-Score (W/L Predictability) |
+| J | Avg # of Bars in Trade | | AJ | Current Streak |
+| K | Avg # of Trades per Year | | AK | Monthly Sharpe Ratio |
+| L | Monthly Profit Analysis | | AL | Annualized Sharpe Ratio |
+| M | Average Monthly Profit | | AM | Calmar Ratio |
+| N | Std Dev of Monthly Profits | | AN | Losing Trades |
+| O | Winning Trades | | AO | Total Losers |
+| P | Total Winners | | AP | Gross Loss |
+| Q | Gross Profit | | AQ | Average Loss |
+| R | Average Win | | AR | Largest Loss |
+| S | Largest Win | | AS | Largest Peak in Loss |
+| T | Largest Drawdown in Win | | AT | Avg Peak in Loss |
+| U | Avg Drawdown in Win | | AU | Avg Run Up in Loss |
+| V | Avg Run Up in Win | | AV | Avg Run Down in Loss |
+| W | Avg Run Down in Win | | AW | Most Consec Losses |
+| X | Most Consec Wins | | AX | Avg # of Consec Losses |
+| Y | Avg # of Consec Wins | | AY | Avg # of Bars in Losses |
+| Z | Avg # of Bars in Wins | | | |
 
 ---
 
 ## What the product owner should verify
 
-- [ ] The report date format matches `M/D/YYYY H:MM AM/PM` — if your reports use a different format, the date will not be captured.
-- [ ] Every label in the Word report (`Name:`, `Symbols:`, `Total Net Profit:`, etc.) uses a colon `:` or dash `-` as the separator. Other separators (e.g. `=`, tab, just a space) will not be recognised.
-- [ ] `Avg # of Trades per Year` must appear exactly with that wording — abbreviated or reworded labels will not match.
-- [ ] `Max Closed-out Drawdown` must use either a hyphen or a space between `Closed` and `out`.
-- [ ] Numeric values must use digits, commas, and dots only (e.g. `12,345.67`). Currency symbols other than `$` before the number will cause the value to not be captured.
-- [ ] The Excel file must already have a header row in row 1 — the app starts writing data from row 2.
+- [ ] **Append vs. overwrite:** confirm append-only (one row per upload,
+  even for a repeat of the same report) is the intended behavior. The
+  earlier draft specified overwrite-by-filename; the implemented app does
+  not do this yet.
+- [ ] **ReportDate / Name / Symbols:** confirm whether these fields (present
+  in an earlier draft and mockup) are actually needed. They are not
+  currently extracted.
+- [ ] Extraction only looks at **table cells**, not paragraph text outside
+  a table. Confirm all source reports keep their metrics in a table (true
+  for the sample report reviewed during development).
+- [ ] Label matching tolerates case, extra whitespace, and a short list of
+  known wording variants per field — but a genuinely different label
+  (e.g. an abbreviated or reworded metric name not already in the alias
+  list) will not match, and that field will be written as `MISSING`.
+- [ ] A missing field no longer causes a blank cell silently — it's
+  written as the text `MISSING` and highlighted red, so gaps are visible
+  on review rather than indistinguishable from "value was empty".
+- [ ] Filename validation (web upload) rejects non-`.docx` files and files
+  with unsafe/disallowed characters in the name before any content is
+  read — confirm the allowed character set (letters, numbers, spaces,
+  `( ) _ - .`) is not too restrictive for how reports are actually named.
+- [ ] File size cap on upload: 20 MB.
