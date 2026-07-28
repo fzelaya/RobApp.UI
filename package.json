@@ -1,0 +1,30 @@
+{
+  "name": "strategy-report-extractor",
+  "version": "1.0.0",
+  "description": "Extracts trading strategy performance metrics from a Word (.docx) report and exports them to a single-row Excel workbook.",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/index.js",
+    "extract": "ts-node src/index.ts",
+    "serve": "node dist/server.js",
+    "dev:serve": "ts-node src/server.ts"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "@xmldom/xmldom": "^0.8.10",
+    "xpath": "^0.0.34",
+    "exceljs": "^4.4.0",
+    "commander": "^12.1.0",
+    "express": "^4.19.2",
+    "multer": "^2.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "ts-node": "^10.9.2",
+    "@types/node": "^20.14.10",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.11"
+  }
+}
