@@ -74,6 +74,20 @@ if not "%~1"=="" (
     if "%PORT%"=="" set PORT=3000
 )
 
+set APP_URL=http://localhost:%PORT%
+
+:: --- Open the default web browser once the server is actually responding ---
+:: Runs via a minimized, detached PowerShell helper so it doesn't block this
+:: window -- the server below stays this script's foreground process, so
+:: Ctrl+C still reaches it directly. PowerShell ships with Windows 7 SP1+ /
+:: 10 / 11, so this needs no extra install.
+where powershell >nul 2>nul
+if not errorlevel 1 (
+    start "" /min powershell -NoProfile -WindowStyle Hidden -Command "$u='%APP_URL%'; for($i=0;$i -lt 20;$i++){ try { Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 1 | Out-Null; break } catch { Start-Sleep -Milliseconds 500 } }; Start-Process $u"
+) else (
+    echo ==^> PowerShell not found -- please open your browser to %APP_URL% manually.
+)
+
 echo ==^> Starting server on http://localhost:%PORT% ...
 echo Press Ctrl+C to stop.
 echo.

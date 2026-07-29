@@ -65,6 +65,41 @@ npm run build
 #     startup, but creating it here avoids any doubt before first launch) ---
 mkdir -p data
 
+PORT="${PORT:-3000}"
+APP_URL="http://localhost:${PORT}"
+
+# --- Open the default web browser once the server is actually responding ---
+# Runs as a short-lived background helper (not the server itself), so the
+# server stays the script's foreground process below and Ctrl+C still
+# reaches it directly.
+open_browser() {
+  # Wait for the server to actually accept connections (up to ~10s) rather
+  # than guessing with a fixed sleep. Falls back to a short flat delay if
+  # curl isn't available.
+  if command -v curl &> /dev/null; then
+    for _ in $(seq 1 20); do
+      if curl -s -o /dev/null "$APP_URL"; then
+        break
+      fi
+      sleep 0.5
+    done
+  else
+    sleep 2
+  fi
+
+  echo "Opening browser to $APP_URL..."
+  if command -v xdg-open &> /dev/null; then
+    xdg-open "$APP_URL"  # Linux
+  elif command -v open &> /dev/null; then
+    open "$APP_URL"  # macOS
+  elif command -v start &> /dev/null; then
+    start "$APP_URL"  # Windows (Git Bash, when available)
+  else
+    echo "Unable to detect a method to open the browser. Please open it manually: $APP_URL"
+  fi
+}
+( open_browser & ) 2>/dev/null
+
 # --- Start the server ---
 PORT="${PORT:-3000}"
 info "Starting server on http://localhost:${PORT} ..."
