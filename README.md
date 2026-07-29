@@ -156,6 +156,44 @@ npm install
 npm run build
 ```
 
+## Quick start (start scripts)
+
+Two scripts handle install + build + launch in one step — useful if you
+don't want to run the npm commands manually every time.
+
+**macOS / Linux** — `start-app.sh`:
+
+```bash
+chmod +x start-app.sh   # first time only
+./start-app.sh
+```
+
+If you get `Permission denied`, the executable bit just isn't set yet
+(common when a file is downloaded rather than cloned) — run the `chmod +x`
+above, or skip it entirely and run the script via bash directly:
+
+```bash
+bash start-app.sh
+```
+
+Optional port override: `PORT=8080 ./start-app.sh`
+
+**Windows** — `start-app-win.bat`:
+
+Double-click it in Explorer, or from `cmd.exe`/PowerShell:
+
+```
+start-app-win.bat
+start-app-win.bat 8080
+```
+
+Both scripts check that Node.js/npm are installed (with a download link if
+not), run `npm install` only if `node_modules` is missing, build the
+TypeScript, make sure `data/` exists, and start the server on
+`http://localhost:3000` (or the port you specify). `start-app-win.bat`
+pauses on any error so a double-click launch doesn't close before you can
+read what went wrong.
+
 ## Usage — Web
 
 ```bash
